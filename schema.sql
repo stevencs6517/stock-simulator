@@ -96,9 +96,10 @@ create index if not exists ventures_user on public.ventures(user_id);
 alter table public.ventures add column if not exists offer_value   numeric;
 alter table public.ventures add column if not exists offer_expires timestamptz;
 
--- Daily login streak + bonus.
+-- Daily login streak + bonus, and the once-a-day casino spin.
 alter table public.profiles add column if not exists streak     int  not null default 0;
 alter table public.profiles add column if not exists last_bonus  date;
+alter table public.profiles add column if not exists last_spin   date;
 
 -- Dividends: real (non-goofy) stocks pay a small yield each tick to holders.
 alter table public.stocks add column if not exists div_yield numeric not null default 0;
@@ -133,6 +134,21 @@ create table if not exists public.user_achievements (
   unlocked_at timestamptz not null default now(),
   primary key (user_id, ach_id)
 );
+
+-- Next-tick prediction bets (resolved by the market tick).
+create table if not exists public.predictions (
+  id          bigserial primary key,
+  user_id     uuid not null references public.profiles(id) on delete cascade,
+  symbol      text not null references public.stocks(symbol) on delete cascade,
+  direction   text not null,                       -- 'up' | 'down'
+  wager       numeric not null,
+  entry_price numeric not null,
+  status      text not null default 'pending',     -- pending | won | lost | push
+  payout      numeric not null default 0,
+  created_at  timestamptz not null default now(),
+  resolved_at timestamptz
+);
+create index if not exists predictions_user on public.predictions(user_id);
 
 -- ============================================================================
 --  SEED: STOCKS  (new symbols added; existing prices left untouched)
@@ -424,6 +440,86 @@ begin
   return v_offer;
 end; $$;
 
+-- ---------- NEXT-TICK PREDICTION ----------
+-- Wager that a stock will be up or down at the next market tick.
+create or replace function public.place_prediction(p_symbol text, p_direction text, p_wager numeric)
+returns void language plpgsql security definer set search_path = public as $$
+declare v_uid uuid := auth.uid(); v_cash numeric; v_price numeric;
+begin
+  if v_uid is null then raise exception 'Not signed in'; end if;
+  if p_direction not in ('up','down') then raise exception 'Pick up or down'; end if;
+  if p_wager is null or p_wager < 1 then raise exception 'Wager at least $1'; end if;
+  select price into v_price from public.stocks where symbol = p_symbol;
+  if v_price is null then raise exception 'Unknown symbol %', p_symbol; end if;
+  select cash into v_cash from public.profiles where id = v_uid for update;
+  if v_cash < p_wager then raise exception 'Insufficient funds'; end if;
+  update public.profiles set cash = cash - p_wager where id = v_uid;
+  insert into public.predictions (user_id, symbol, direction, wager, entry_price)
+  values (v_uid, p_symbol, p_direction, p_wager, v_price);
+end; $$;
+
+-- ---------- CASINO ----------
+-- One free spin per day for a random cash prize.
+create or replace function public.daily_spin()
+returns json language plpgsql security definer set search_path = public as $$
+declare v_uid uuid := auth.uid(); v_last date; v_prize numeric; v_r numeric;
+begin
+  if v_uid is null then raise exception 'Not signed in'; end if;
+  select last_spin into v_last from public.profiles where id = v_uid for update;
+  if v_last = current_date then return json_build_object('spun', false, 'prize', 0); end if;
+  v_r := random();
+  v_prize := case
+    when v_r < 0.40  then 50
+    when v_r < 0.70  then 150
+    when v_r < 0.88  then 400
+    when v_r < 0.97  then 1000
+    when v_r < 0.998 then 5000
+    else 25000 end;
+  update public.profiles set cash = cash + v_prize, last_spin = current_date where id = v_uid;
+  return json_build_object('spun', true, 'prize', v_prize);
+end; $$;
+
+-- Coin flip: call heads/tails, win pays 1.95×.
+create or replace function public.coin_flip(p_wager numeric, p_call text)
+returns json language plpgsql security definer set search_path = public as $$
+declare v_uid uuid := auth.uid(); v_cash numeric; v_result text; v_win boolean; v_payout numeric := 0;
+begin
+  if v_uid is null then raise exception 'Not signed in'; end if;
+  if p_call not in ('heads','tails') then raise exception 'Call heads or tails'; end if;
+  if p_wager is null or p_wager < 1 then raise exception 'Wager at least $1'; end if;
+  select cash into v_cash from public.profiles where id = v_uid for update;
+  if v_cash < p_wager then raise exception 'Insufficient funds'; end if;
+  update public.profiles set cash = cash - p_wager where id = v_uid;
+  v_result := case when random() < 0.5 then 'heads' else 'tails' end;
+  v_win := (v_result = p_call);
+  if v_win then v_payout := round((p_wager * 1.95)::numeric, 2);
+    update public.profiles set cash = cash + v_payout where id = v_uid; end if;
+  return json_build_object('win', v_win, 'result', v_result, 'payout', v_payout);
+end; $$;
+
+-- Ticker slots: three reels, payouts for pairs and triples.
+create or replace function public.play_slots(p_wager numeric)
+returns json language plpgsql security definer set search_path = public as $$
+declare v_uid uuid := auth.uid(); v_cash numeric;
+        v_sym text[] := array['🍒','🔔','💎','🚀','7️⃣','📈'];
+        a int; b int; c int; v_payout numeric := 0; v_mult numeric := 0;
+begin
+  if v_uid is null then raise exception 'Not signed in'; end if;
+  if p_wager is null or p_wager < 1 then raise exception 'Wager at least $1'; end if;
+  select cash into v_cash from public.profiles where id = v_uid for update;
+  if v_cash < p_wager then raise exception 'Insufficient funds'; end if;
+  update public.profiles set cash = cash - p_wager where id = v_uid;
+  a := 1 + floor(random()*6)::int; b := 1 + floor(random()*6)::int; c := 1 + floor(random()*6)::int;
+  if a = b and b = c then
+    v_mult := case v_sym[a] when '💎' then 50 when '7️⃣' then 25 when '🚀' then 15 else 10 end;
+  elsif a = b or b = c or a = c then
+    v_mult := 2;
+  end if;
+  if v_mult > 0 then v_payout := round((p_wager * v_mult)::numeric, 2);
+    update public.profiles set cash = cash + v_payout where id = v_uid; end if;
+  return json_build_object('reels', array[v_sym[a], v_sym[b], v_sym[c]], 'payout', v_payout, 'mult', v_mult);
+end; $$;
+
 create or replace function public.buy_home(p_tier int)
 returns void language plpgsql security definer set search_path = public as $$
 declare v_uid uuid := auth.uid(); v_cur int; v_cur_price numeric; v_new_price numeric;
@@ -517,6 +613,7 @@ create or replace function public.tick_market()
 returns void language plpgsql security definer set search_path = public as $$
 declare r record; v_shock numeric; v_drift numeric := 0.0008; v_evt numeric; v_kind text; v_title text;
         o record; v_px numeric; v_fill boolean;
+        pr record; v_liab numeric; v_liq numeric;
 begin
   for r in select * from public.stocks loop
     v_shock := r.vol * (random() - random()) * 1.6;
@@ -572,6 +669,20 @@ begin
     end if;
   end loop;
 
+  -- resolve next-tick predictions against the freshly-moved prices
+  for pr in select * from public.predictions where status = 'pending' loop
+    select price into v_px from public.stocks where symbol = pr.symbol;
+    if v_px is null or v_px = pr.entry_price then
+      update public.profiles set cash = cash + pr.wager where id = pr.user_id;   -- push / refund
+      update public.predictions set status='push', payout=pr.wager, resolved_at=now() where id = pr.id;
+    elsif (pr.direction='up' and v_px > pr.entry_price) or (pr.direction='down' and v_px < pr.entry_price) then
+      update public.profiles set cash = cash + round((pr.wager*1.9)::numeric,2) where id = pr.user_id;
+      update public.predictions set status='won', payout=round((pr.wager*1.9)::numeric,2), resolved_at=now() where id = pr.id;
+    else
+      update public.predictions set status='lost', payout=0, resolved_at=now() where id = pr.id;
+    end if;
+  end loop;
+
   update public.profiles p
     set cash = cash + ht.income_per_tick
     from public.home_tiers ht
@@ -615,6 +726,27 @@ begin
         offer_expires = now() + interval '10 minutes'
     where offer_value is null and value > 0 and random() < 0.04;
 
+  -- margin call: if a player's short liability exceeds their liquid assets
+  -- (cash + long holdings), force-liquidate everything to close the shorts
+  for pr in select distinct user_id from public.shorts loop
+    select coalesce(sum(sh.shares * s.price), 0) into v_liab
+      from public.shorts sh join public.stocks s on s.symbol = sh.symbol
+      where sh.user_id = pr.user_id;
+    select coalesce((select cash from public.profiles where id = pr.user_id), 0)
+         + coalesce((select sum(h.shares * s.price) from public.holdings h
+                     join public.stocks s on s.symbol = h.symbol where h.user_id = pr.user_id), 0)
+      into v_liq;
+    if v_liab > v_liq then
+      update public.profiles p set cash = cash
+        + coalesce((select sum(h.shares * s.price) from public.holdings h
+                    join public.stocks s on s.symbol = h.symbol where h.user_id = p.id), 0)
+        where p.id = pr.user_id;
+      delete from public.holdings where user_id = pr.user_id;
+      update public.profiles set cash = greatest(0, cash - v_liab) where id = pr.user_id;
+      delete from public.shorts where user_id = pr.user_id;
+    end if;
+  end loop;
+
   -- record each player's net worth for the 12-hour summary
   insert into public.networth_snapshots (user_id, net_worth)
   select p.id, public.user_net_worth(p.id) from public.profiles p;
@@ -622,6 +754,7 @@ begin
   delete from public.price_history where ts < now() - interval '2 days';
   delete from public.networth_snapshots where ts < now() - interval '3 days';
   delete from public.market_events where id not in (select id from public.market_events order by ts desc limit 30);
+  delete from public.predictions where status <> 'pending' and resolved_at < now() - interval '1 day';
 end; $$;
 
 -- ============================================================================
@@ -638,6 +771,7 @@ alter table public.ventures            enable row level security;
 alter table public.shorts              enable row level security;
 alter table public.orders              enable row level security;
 alter table public.user_achievements   enable row level security;
+alter table public.predictions         enable row level security;
 
 drop policy if exists profiles_select_own on public.profiles;
 create policy profiles_select_own on public.profiles for select to authenticated using (id = auth.uid());
@@ -672,10 +806,13 @@ create policy orders_select_own on public.orders for select to authenticated usi
 drop policy if exists ach_select_own on public.user_achievements;
 create policy ach_select_own on public.user_achievements for select to authenticated using (user_id = auth.uid());
 
+drop policy if exists predictions_select_own on public.predictions;
+create policy predictions_select_own on public.predictions for select to authenticated using (user_id = auth.uid());
+
 grant select on public.profiles, public.holdings, public.stocks,
                  public.price_history, public.home_tiers, public.networth_snapshots,
                  public.market_events, public.ventures,
-                 public.shorts, public.orders, public.user_achievements
+                 public.shorts, public.orders, public.user_achievements, public.predictions
   to authenticated;
 grant execute on function public.buy_stock(text,int)            to authenticated;
 grant execute on function public.sell_stock(text,int)           to authenticated;
@@ -691,6 +828,10 @@ grant execute on function public.unlock_achievement(text)       to authenticated
 grant execute on function public.claim_daily_bonus()            to authenticated;
 grant execute on function public.accept_venture_offer(bigint)   to authenticated;
 grant execute on function public.user_net_worth(uuid)           to authenticated;
+grant execute on function public.place_prediction(text,text,numeric) to authenticated;
+grant execute on function public.daily_spin()                   to authenticated;
+grant execute on function public.coin_flip(numeric,text)        to authenticated;
+grant execute on function public.play_slots(numeric)            to authenticated;
 
 -- ============================================================================
 --  REALTIME  (push live prices to every connected player)

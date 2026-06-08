@@ -258,6 +258,21 @@
   .vent-item button{padding:6px 11px;font-size:12px}
   .vent-item.offer{border-color:var(--gold);box-shadow:inset 0 0 0 1px var(--gold)}
   .vent-item .voffer{color:var(--gold);font-size:11px;font-weight:700}
+
+  /* games */
+  .game-result{min-height:22px;margin-top:12px;text-align:center;font-size:15px;font-weight:700}
+  .slot-reels{font-size:46px;text-align:center;letter-spacing:8px;margin:6px 0 12px;
+    background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:14px 0}
+  .slot-reels.spin{animation:slotPulse .5s ease}
+  @keyframes slotPulse{0%{filter:blur(2px);opacity:.5}100%{filter:blur(0);opacity:1}}
+  .pred-row{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--line);
+    border-radius:10px;font-size:12.5px;margin-top:7px}
+  .pred-row .pd{flex:1}
+  .pred-row .ps{font-weight:700;font-size:11px;padding:2px 8px;border-radius:20px}
+  .pred-row .ps.pending{background:var(--surface2);color:var(--muted)}
+  .pred-row .ps.won{background:var(--green-dim);color:var(--green)}
+  .pred-row .ps.lost{background:var(--red-dim);color:var(--red)}
+  .pred-row .ps.push{background:var(--surface2);color:var(--gold)}
 </style>
 </head>
 <body>
@@ -348,6 +363,7 @@
     <button data-tab="market" class="on">📈 Market</button>
     <button data-tab="estate">🏡 Real Estate</button>
     <button data-tab="ventures">🎲 Ventures</button>
+    <button data-tab="games">🎮 Games</button>
   </div>
 
   <!-- MARKET TAB -->
@@ -509,6 +525,56 @@
     </div>
   </div>
 
+  <!-- GAMES TAB -->
+  <div id="tab-games" class="tabview">
+    <div class="vent-grid">
+      <section class="card vent-card" style="border-color:rgba(91,140,255,.35)">
+        <div class="vent-icon">🎯</div>
+        <h2 class="vent-h">Next-Tick Prediction</h2>
+        <div class="vent-desc">Call whether a stock will be <b class="up">up</b> or <b class="down">down</b> at the next price tick (~2 min). Win pays <b>1.9×</b> your wager. Resolves automatically.</div>
+        <div class="trow">
+          <select id="predSym" class="ord-select"></select>
+          <input id="predAmt" type="number" min="1" step="1" placeholder="Wager $" style="width:120px" />
+        </div>
+        <div class="trow" style="margin-top:10px">
+          <button id="predUp" class="green" style="flex:1">▲ Up</button>
+          <button id="predDown" class="red" style="flex:1">▼ Down</button>
+        </div>
+        <div id="predList" style="margin-top:14px"></div>
+      </section>
+
+      <section class="card vent-card" style="border-color:var(--gold)">
+        <div class="vent-icon">🎡</div>
+        <h2 class="vent-h">Daily Spin</h2>
+        <div class="vent-desc">One free spin every day. Prizes from <b>$50</b> up to a <b class="up">$25,000</b> jackpot. Comes back tomorrow.</div>
+        <div id="spinResult" class="game-result">—</div>
+        <button id="spinBtn" class="primary" style="width:100%;margin-top:8px">🎡 Spin the wheel</button>
+      </section>
+
+      <section class="card vent-card" style="border-color:rgba(255,206,92,.35)">
+        <div class="vent-icon">🪙</div>
+        <h2 class="vent-h">Coin Flip</h2>
+        <div class="vent-desc">Call it in the air. Heads or tails — a win pays <b>1.95×</b>.</div>
+        <input id="flipAmt" type="number" min="1" step="1" placeholder="Wager $" style="width:100%" />
+        <div class="trow" style="margin-top:10px">
+          <button id="flipHeads" class="ghost" style="flex:1">🙂 Heads</button>
+          <button id="flipTails" class="ghost" style="flex:1">🦅 Tails</button>
+        </div>
+        <div id="flipResult" class="game-result">—</div>
+      </section>
+
+      <section class="card vent-card" style="border-color:rgba(185,139,255,.35)">
+        <div class="vent-icon">🎰</div>
+        <h2 class="vent-h">Ticker Slots</h2>
+        <div class="vent-desc">Match three to win big: 💎 pays <b>50×</b>, 7️⃣ <b>25×</b>, 🚀 <b>15×</b>, others <b>10×</b>. Any pair pays <b>2×</b>.</div>
+        <div id="slotReels" class="slot-reels">🎰 🎰 🎰</div>
+        <input id="slotAmt" type="number" min="1" step="1" placeholder="Wager $" style="width:100%" />
+        <button id="slotBtn" class="primary" style="width:100%;margin-top:8px;background:var(--purple);border-color:var(--purple)">🎰 Spin</button>
+        <div id="slotResult" class="game-result">—</div>
+      </section>
+    </div>
+  </div>
+
   <footer>Fictional market for entertainment. Company names are used parodically; prices are randomly simulated and are not investment advice.</footer>
 </div>
 
@@ -595,6 +661,7 @@ function confettiBurst(){
 // ============================ STATE ============================
 let me=null, profile=null, stocks=[], holdings={}, homeTiers=[], selected=null, historyCache={};
 let nwHistory=[], lastRank=0, lastPlayers=0, ventures=[], shorts={}, orders=[], lastLbRows=[];
+let predictions=[], seenPred=new Set(), predSymInit=false;
 const stock = sym => stocks.find(s=>s.symbol===sym);
 const homeOf = tier => homeTiers.find(h=>h.tier===tier) || {price:0,name:"—",emoji:"🏷️",income_per_tick:0};
 function holdingsValue(){let v=0;for(const s of stocks){const h=holdings[s.symbol];if(h)v+=h.shares*s.price;}return v;}
@@ -609,9 +676,11 @@ document.querySelectorAll(".tabbar button").forEach(b=>b.onclick=()=>{
   $("tab-market").classList.toggle("on", t==="market");
   $("tab-estate").classList.toggle("on", t==="estate");
   $("tab-ventures").classList.toggle("on", t==="ventures");
+  $("tab-games").classList.toggle("on", t==="games");
   if(t==="market" && profile){ renderChart(); drawNWChart(); }
   if(t==="estate" && profile) renderHomes();
   if(t==="ventures" && profile) renderVentures();
+  if(t==="games" && profile) renderGames();
 });
 
 // ============================ AUTH UI ============================
@@ -687,6 +756,20 @@ async function loadOrders(){
   const{data}=await sb.from("orders").select("*").eq("user_id",me.id).order("created_at",{ascending:false});
   orders=(data||[]).map(o=>({...o,qty:Number(o.qty),trigger_price:Number(o.trigger_price)}));
 }
+async function loadPredictions(){
+  const{data}=await sb.from("predictions").select("*").eq("user_id",me.id).order("created_at",{ascending:false}).limit(20);
+  predictions=(data||[]).map(p=>({...p,wager:Number(p.wager),entry_price:Number(p.entry_price),payout:Number(p.payout)}));
+}
+// Toast a prediction when it resolves (skip on the first load so old bets stay quiet).
+function notifyResolved(initial){
+  for(const p of predictions){
+    if(p.status==="pending" || seenPred.has(p.id)) continue;
+    seenPred.add(p.id);
+    if(initial) continue;
+    if(p.status==="won"){ toast(`🎯 ${p.symbol} ${p.direction==="up"?"▲":"▼"} — prediction won ${fmtShort(p.payout)}!`,"good"); grantAchievement("prophet"); }
+    else if(p.status==="lost"){ toast(`🎯 ${p.symbol} prediction missed — lost ${fmtShort(p.wager)}.`,"bad"); }
+  }
+}
 
 // ============================ DAILY 12-HOUR SUMMARY ============================
 async function showDailySummary(){
@@ -739,6 +822,14 @@ const ACHIEVEMENTS=[
   {id:"venture_mogul",em:"💼", t:"Venture Mogul",      d:"Hold $250k+ across your ventures.", test:c=>c.ventureValue>=250000},
   {id:"millionaire", em:"🏦", t:"Millionaire",        d:"Reach $1,000,000 net worth.",      test:c=>c.nw>=1000000},
   {id:"island",      em:"🏝️", t:"Island Life",        d:"Own the Beachfront Villa.",         test:c=>c.homeTier>=9},
+  {id:"first_short", em:"📉", t:"Short Seller",        d:"Open your first short position.",   test:c=>c.shortCount>=1},
+  {id:"short_win",   em:"🩳", t:"Buy Low, Sell Lower", d:"Cover a short at a profit.",        test:()=>false},
+  {id:"order_set",   em:"⏱️", t:"Set & Forget",        d:"Place a limit or stop order.",      test:c=>c.orderCount>=1},
+  {id:"dividend_collector",em:"💰",t:"Dividend Investor",d:"Hold a dividend-paying stock.",   test:c=>c.holdsDividend},
+  {id:"week_streak", em:"🔥", t:"Regular",             d:"Reach a 7-day login streak.",       test:c=>c.streak>=7},
+  {id:"prophet",     em:"🔮", t:"Prophet",             d:"Win a next-tick prediction.",       test:()=>false},
+  {id:"high_roller", em:"🎰", t:"High Roller",         d:"Win big in the casino.",            test:()=>false},
+  {id:"acquired",    em:"🤝", t:"Bought Out",          d:"Accept an acquisition offer.",      test:()=>false},
 ];
 let unlocked=new Set();
 function loadUnlocked(){
@@ -755,15 +846,27 @@ async function loadUnlockedDB(){
   saveUnlocked();
 }
 function achContext(){
-  let maxMultiple=0, maxPosVal=0, distinct=0;
+  let maxMultiple=0, maxPosVal=0, distinct=0, holdsDividend=false;
   for(const sym in holdings){
     const h=holdings[sym], s=stock(sym); if(!s||!h.shares) continue;
     distinct++; const val=h.shares*s.price; maxPosVal=Math.max(maxPosVal,val);
     if(h.cost_basis>0) maxMultiple=Math.max(maxMultiple,val/h.cost_basis);
+    if(Number(s.div_yield)>0) holdsDividend=true;
   }
   return {nw:netWorth(), cash:profile.cash, pl:netWorth()-1000, homeTier:profile.home_tier,
           distinct, maxMultiple, maxPosVal, rank:lastRank, players:lastPlayers,
-          ventureCount:ventures.length, ventureValue:venturesValue()};
+          ventureCount:ventures.length, ventureValue:venturesValue(),
+          shortCount:Object.keys(shorts).length, orderCount:orders.length,
+          streak:profile.streak||0, holdsDividend};
+}
+// Unlock an event-based achievement on the spot (for things a context test can't see).
+function grantAchievement(id){
+  if(unlocked.has(id)) return;
+  const a=ACHIEVEMENTS.find(x=>x.id===id); if(!a) return;
+  unlocked.add(id); saveUnlocked();
+  try{ sb.rpc("unlock_achievement",{p_id:id}); }catch(e){}
+  toast(`🏅 Achievement unlocked: ${a.em} ${a.t}`,"ach");
+  playSound("achieve"); confettiBurst();
 }
 function checkAchievements(){
   if(!profile) return;
@@ -901,7 +1004,9 @@ function drawNWChart(){
 function renderHoldingsSummary(){
   let invested=0,value=0;
   for(const sym in holdings){const h=holdings[sym],s=stock(sym);if(!s)continue;invested+=h.cost_basis;value+=h.shares*s.price;}
-  const pl=value-invested;
+  let shortPL=0;
+  for(const sym in shorts){const sh=shorts[sym],s=stock(sym);if(!s)continue;shortPL+=sh.proceeds-sh.shares*s.price;}
+  const pl=(value-invested)+shortPL;          // unrealized P/L across longs and shorts
   $("pfInvested").textContent=fmtShort(invested);
   $("pfValue").textContent=fmtShort(value);
   const e=$("pfPL"); e.textContent=(pl>=0?"+":"−")+fmtShort(Math.abs(pl)); e.className="v "+(pl>0?"up":pl<0?"down":"flat");
@@ -1036,7 +1141,9 @@ function renderVentures(){
     const hasOffer=v.offer_value!=null && v.offer_expires && new Date(v.offer_expires).getTime()>Date.now();
     const offerLine=hasOffer?`<br><span class="voffer">🤝 Buyout offer: ${fmtShort(v.offer_value)}</span>`:"";
     const btn=hasOffer
-      ? `<button class="green" data-offer="${v.id}" title="Accept the acquisition offer">Accept 🤝</button>`
+      ? `<div style="display:flex;flex-direction:column;gap:6px">
+           <button class="green" data-offer="${v.id}" title="Accept the acquisition offer">Accept 🤝</button>
+           <button data-vid="${v.id}">Cash out</button></div>`
       : `<button data-vid="${v.id}">Cash out</button>`;
     return `<div class="vent-item ${hasOffer?'offer':''}"><span class="vi">${icon}</span>
       <div class="vn">${v.name}<br><span class="vk">${v.kind==="startup"?"Startup":"Business"} · invested ${fmtShort(v.invested)} · <span class="${gcls}">${gain>=0?"+":"−"}${fmtShort(Math.abs(gain))}</span></span>${offerLine}</div>
@@ -1046,11 +1153,35 @@ function renderVentures(){
   list.querySelectorAll("button[data-vid]").forEach(b=>b.onclick=()=>sellVenture(Number(b.dataset.vid)));
   list.querySelectorAll("button[data-offer]").forEach(b=>b.onclick=()=>acceptVentureOffer(Number(b.dataset.offer)));
 }
+function renderGames(){
+  const cur=$("predSym").value;
+  $("predSym").innerHTML=stocks.map(s=>`<option value="${s.symbol}" ${s.symbol===cur?"selected":""}>${s.symbol} · ${fmt(s.price)}</option>`).join("");
+  predSymInit=true;
+  renderPredList();
+  const today=new Date().toISOString().slice(0,10);
+  const spun = profile && profile.last_spin===today;
+  $("spinBtn").disabled = !!spun;
+  if(spun && $("spinResult").textContent==="—") $("spinResult").textContent="Come back tomorrow for your free spin!";
+}
+function renderPredList(){
+  const list=$("predList");
+  if(!predictions.length){ list.innerHTML=""; return; }
+  list.innerHTML=predictions.slice(0,6).map(p=>{
+    const arrow=p.direction==="up"?"▲":"▼";
+    const txt=p.status==="pending"?"pending"
+      :p.status==="won"?`won +${fmtShort(p.payout-p.wager)}`
+      :p.status==="push"?"refunded":`lost ${fmtShort(p.wager)}`;
+    return `<div class="pred-row"><div class="pd"><b>${p.symbol} ${arrow}</b> · ${fmtShort(p.wager)}
+       <span style="color:var(--faint)">@ ${fmt(p.entry_price)}</span></div>
+      <span class="ps ${p.status}">${txt}</span></div>`;
+  }).join("");
+}
 function renderAll(){
   renderHeader(); renderMarket(); renderTicker(); renderChart();
   drawNWChart(); renderHoldingsSummary(); renderTrade();
   if($("tab-estate").classList.contains("on")) renderHomes();
   if($("tab-ventures").classList.contains("on")) renderVentures();
+  if($("tab-games").classList.contains("on")) renderGames();
   checkAchievements();
 }
 
@@ -1099,11 +1230,14 @@ async function coverShort(){
   const qty=Math.floor(Number($("qty").value));
   if(!qty||qty<=0){ playSound("error"); return toast("Enter a quantity of 1 or more.","bad"); }
   if(!confirm(`Cover ${qty} ${selected}?`)) return;
+  const sh0=shorts[selected], s0=stock(selected);
+  const wasProfit = sh0 && s0 && (sh0.proceeds/sh0.shares) > s0.price;
   $("coverBtn").disabled=true;
   const{error}=await sb.rpc("cover_short",{p_symbol:selected,p_qty:qty});
   $("coverBtn").disabled=false;
   if(error){ playSound("error"); return toast(friendlyError(error),"bad"); }
   playSound("buy"); toast(`Covered ${qty} ${selected}. ✅`,"good");
+  if(wasProfit) grantAchievement("short_win");
   await loadStocks(); await loadPortfolio(); await loadShorts(); await loadHistory(selected); renderAll(); loadLeaderboard();
 }
 async function placeOrder(){
@@ -1118,6 +1252,7 @@ async function placeOrder(){
   if(error){ playSound("error"); return toast(friendlyError(error),"bad"); }
   $("ordPrice").value="";
   toast(`Order placed for ${qty} ${selected}. ⏱️`,"good");
+  grantAchievement("order_set");
   await loadOrders(); renderTrade();
 }
 async function cancelOrder(id){
@@ -1174,7 +1309,57 @@ async function acceptVentureOffer(id){
   if(error){ playSound("error"); return toast(friendlyError(error),"bad"); }
   playSound("achieve"); confettiBurst();
   toast(`Acquired! Sold ${v?v.name:"venture"} for ${fmtShort(data)}. 🤝`,"gold");
+  grantAchievement("acquired");
   await loadPortfolio(); await loadVentures(); renderAll(); loadLeaderboard();
+}
+// ---- Games ----
+async function placePrediction(dir){
+  const sym=$("predSym").value, wager=Math.floor(Number($("predAmt").value));
+  if(!sym){ playSound("error"); return toast("Pick a stock first.","bad"); }
+  if(!wager||wager<1){ playSound("error"); return toast("Enter a wager of at least $1.","bad"); }
+  $("predUp").disabled=$("predDown").disabled=true;
+  const{error}=await sb.rpc("place_prediction",{p_symbol:sym,p_direction:dir,p_wager:wager});
+  $("predUp").disabled=$("predDown").disabled=false;
+  if(error){ playSound("error"); return toast(friendlyError(error),"bad"); }
+  playSound("buy"); toast(`Bet ${fmtShort(wager)} that ${sym} goes ${dir}. ⏳`,"good");
+  $("predAmt").value="";
+  await loadPortfolio(); await loadPredictions(); renderHeader(); renderGames();
+}
+async function doSpin(){
+  $("spinBtn").disabled=true;
+  const{data,error}=await sb.rpc("daily_spin");
+  if(error){ $("spinBtn").disabled=false; playSound("error"); return toast(friendlyError(error),"bad"); }
+  if(!data.spun){ $("spinResult").textContent="Already spun today — come back tomorrow!"; return; }
+  $("spinResult").innerHTML=`🎉 You won <b class="up">${fmtShort(data.prize)}</b>!`;
+  playSound("achieve"); if(data.prize>=1000){ confettiBurst(); grantAchievement("high_roller"); }
+  await loadPortfolio(); renderHeader();
+}
+async function doFlip(call){
+  const wager=Math.floor(Number($("flipAmt").value));
+  if(!wager||wager<1){ playSound("error"); return toast("Enter a wager of at least $1.","bad"); }
+  $("flipHeads").disabled=$("flipTails").disabled=true;
+  const{data,error}=await sb.rpc("coin_flip",{p_wager:wager,p_call:call});
+  $("flipHeads").disabled=$("flipTails").disabled=false;
+  if(error){ playSound("error"); return toast(friendlyError(error),"bad"); }
+  const face=data.result==="heads"?"🙂":"🦅";
+  if(data.win){ $("flipResult").innerHTML=`${face} ${data.result} — you win <b class="up">${fmtShort(data.payout)}</b>!`;
+    playSound("achieve"); confettiBurst(); grantAchievement("high_roller"); }
+  else{ $("flipResult").innerHTML=`${face} ${data.result} — you lose <b class="down">${fmtShort(wager)}</b>.`; playSound("error"); }
+  await loadPortfolio(); renderHeader();
+}
+async function doSlots(){
+  const wager=Math.floor(Number($("slotAmt").value));
+  if(!wager||wager<1){ playSound("error"); return toast("Enter a wager of at least $1.","bad"); }
+  $("slotBtn").disabled=true;
+  const{data,error}=await sb.rpc("play_slots",{p_wager:wager});
+  $("slotBtn").disabled=false;
+  if(error){ playSound("error"); return toast(friendlyError(error),"bad"); }
+  const reels=$("slotReels"); reels.classList.remove("spin"); void reels.offsetWidth; reels.classList.add("spin");
+  reels.textContent=(data.reels||["🎰","🎰","🎰"]).join(" ");
+  if(data.payout>0){ $("slotResult").innerHTML=`Win <b class="up">${fmtShort(data.payout)}</b> · ${data.mult}×!`;
+    playSound("achieve"); if(data.mult>=10){ confettiBurst(); } grantAchievement("high_roller"); }
+  else{ $("slotResult").innerHTML=`<span class="down">No match — lost ${fmtShort(wager)}.</span>`; playSound("error"); }
+  await loadPortfolio(); renderHeader();
 }
 $("startupBtn").onclick=()=>invest("startup");
 $("bizBtn").onclick=()=>invest("business");
@@ -1185,6 +1370,10 @@ $("buyBtn").onclick=buy; $("sellBtn").onclick=sell;
 $("shortBtn").onclick=shortStock; $("coverBtn").onclick=coverShort;
 $("placeOrderBtn").onclick=placeOrder;
 $("shareLb").onclick=shareLeaderboard;
+$("predUp").onclick=()=>placePrediction("up"); $("predDown").onclick=()=>placePrediction("down");
+$("spinBtn").onclick=doSpin;
+$("flipHeads").onclick=()=>doFlip("heads"); $("flipTails").onclick=()=>doFlip("tails");
+$("slotBtn").onclick=doSlots;
 $("qty").addEventListener("input",updateTradeInfo);
 document.querySelectorAll(".qbtns button[data-q]").forEach(b=>b.onclick=()=>{$("qty").value=b.dataset.q;updateTradeInfo();});
 $("maxBuy").onclick=()=>{const s=stock(selected);$("qty").value=Math.max(1,Math.floor(profile.cash/s.price));updateTradeInfo();};
@@ -1205,6 +1394,7 @@ async function refreshFromTick(){
     await loadStocks(); await loadHistory(selected); await loadNWHistory();
     $("liveTxt").textContent="updated "+new Date().toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
     await loadPortfolio(); await loadVentures(); await loadShorts(); await loadOrders();
+    await loadPredictions(); notifyResolved(false);
     renderAll(); loadLeaderboard();
   },700);
 }
@@ -1232,6 +1422,7 @@ async function enterApp(session){
   if(!profile){ await new Promise(r=>setTimeout(r,800)); await loadPortfolio(); }
   await loadHistory(selected); await loadNWHistory(); await loadVentures();
   await loadShorts(); await loadOrders(); await loadUnlockedDB();
+  await loadPredictions(); notifyResolved(true);
   renderAll(); loadLeaderboard(); subscribeRealtime(); startPolling();
   await claimDailyBonus();
   maybeShowSummary();

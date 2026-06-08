@@ -12,6 +12,7 @@ have to watch, wait, and make smart calls like a real trading app.
 - **Buy low, sell high** — 30+ stocks: real names (NVDA, TSLA, AAPL, …), named picks (Steven Inc., League of Legends, Labubu, Backrooms, …), and a pile of brainrot tickers (Skibidi Toilet, Rizz, Gyatt, Sigma, Ohio, …).
 - **Real estate that pays you** — buy properties from a Studio Apartment up to a Beachfront Villa. Each adds to your net worth *and* earns passive income every market tick.
 - **Ventures** — gamble on high-risk **startups** (up to 10×) or stable **businesses** for passive income. Ventures occasionally get **acquisition offers** you can accept for a premium.
+- **Games tab** — a **Next-Tick Prediction** market (bet up/down on the next price tick, pays 1.9×) plus a casino: **daily spin**, **coin flip**, and **ticker slots**.
 - **Short selling** — bet against a stock: sell borrowed shares now, buy them back cheaper later. Capped by a simple margin rule (total short exposure can't exceed your net worth).
 - **Limit & stop orders** — queue **buy/sell limit** and **stop-loss / buy-stop** orders that the market tick fills automatically when the trigger price is hit.
 - **Dividends** — blue-chip "real" stocks (AAPL, NVDA, F, …, marked 💰) pay holders a small payout every tick.
@@ -22,7 +23,7 @@ have to watch, wait, and make smart calls like a real trading app.
 - **Live leaderboard** — net worth of every friend, ranked, updated in real time, with a **shareable image** (📸 Share) for bragging rights.
 - **Polish** — your own net-worth chart, a top-movers ticker, sound effects (mutable), count-up animations, and a 60-second fallback refresh if the live socket drops.
 
-> ⚠️ **Upgrading an existing deployment?** Re-run [`schema.sql`](schema.sql) in your Supabase SQL editor to add the tables/functions for ventures, shorts, orders, dividends, the daily bonus, and synced achievements. It's safe to re-run — your accounts, cash, and holdings are preserved.
+> ⚠️ **Upgrading an existing deployment?** Re-run [`schema.sql`](schema.sql) in your Supabase SQL editor to add the tables/functions for ventures, shorts, orders, dividends, the daily bonus, synced achievements, predictions, and the casino games (plus short margin-call protection). It's safe to re-run — your accounts, cash, and holdings are preserved.
 
 ## How it's built
 
