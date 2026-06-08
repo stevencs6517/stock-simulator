@@ -496,6 +496,8 @@ begin
   delete from public.ventures where id = p_id and user_id = v_uid;
 end; $$;
 
+-- Return shape changed (added `streak`), so the old version must be dropped first.
+drop function if exists public.get_leaderboard();
 create or replace function public.get_leaderboard()
 returns table(display_name text, net_worth numeric, home_tier int, is_me boolean, streak int)
 language sql security definer set search_path = public as $$
