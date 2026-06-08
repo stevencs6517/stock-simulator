@@ -46,6 +46,16 @@
   input{font-family:inherit;background:var(--bg2);border:1px solid var(--line2);color:var(--text);
     padding:11px 13px;border-radius:10px;font-size:14px;outline:none;transition:border-color .15s}
   input:focus{border-color:var(--accent)}
+  select{font-family:inherit;background:var(--bg2);border:1px solid var(--line2);color:var(--text);
+    padding:10px 12px;border-radius:10px;font-size:13px;outline:none}
+  select:focus{border-color:var(--accent)}
+  .ord-select{flex:1;min-width:150px}
+  .ord-row{display:flex;align-items:center;gap:10px;padding:9px 10px;border:1px solid var(--line);
+    border-radius:10px;font-size:12.5px;margin-top:8px}
+  .ord-row .od{flex:1}
+  .ord-row .ok{color:var(--muted);font-size:11px}
+  .ord-row button{padding:5px 10px;font-size:11.5px}
+  details.adv-order[open] summary{margin-bottom:2px}
   .up{color:var(--green)} .down{color:var(--red)} .flat{color:var(--muted)}
   a{color:var(--accent2)}
 
@@ -246,6 +256,8 @@
   .vent-item .vv .vval{font-weight:700}
   .vent-item .vv .vinc{font-size:11px;color:var(--green)}
   .vent-item button{padding:6px 11px;font-size:12px}
+  .vent-item.offer{border-color:var(--gold);box-shadow:inset 0 0 0 1px var(--gold)}
+  .vent-item .voffer{color:var(--gold);font-size:11px;font-weight:700}
 </style>
 </head>
 <body>
@@ -359,7 +371,11 @@
           </table>
         </section>
         <section class="card">
-          <h2>🏆 Leaderboard <span class="hint">richest friend wins</span></h2>
+          <h2><span>🏆 Leaderboard</span>
+            <span style="display:flex;gap:10px;align-items:center">
+              <span class="hint">richest friend wins</span>
+              <button id="shareLb" class="ghost" style="padding:5px 10px;font-size:11px;font-weight:600">📸 Share</button>
+            </span></h2>
           <div id="leaderboard"><div class="empty">Loading…</div></div>
         </section>
       </div>
@@ -390,6 +406,25 @@
               <button id="buyBtn" class="green" style="flex:1">Buy</button>
               <button id="sellBtn" class="red" style="flex:1">Sell</button>
             </div>
+            <div class="trow" style="margin-top:8px">
+              <button id="shortBtn" class="ghost" style="flex:1" title="Sell borrowed shares — you profit if the price falls">📉 Short</button>
+              <button id="coverBtn" class="ghost" style="flex:1" title="Buy shares back to close a short position">↩️ Cover</button>
+            </div>
+            <details class="adv-order" style="margin-top:14px">
+              <summary style="cursor:pointer;color:var(--muted);font-size:12.5px;font-weight:600">⏱️ Limit / stop order</summary>
+              <div class="trow" style="margin-top:10px">
+                <select id="ordType" class="ord-select">
+                  <option value="buy|limit">Buy limit · fills at or below trigger</option>
+                  <option value="sell|limit">Sell limit · fills at or above trigger</option>
+                  <option value="sell|stop">Stop-loss · sells at or below trigger</option>
+                  <option value="buy|stop">Buy stop · buys at or above trigger</option>
+                </select>
+                <input id="ordPrice" type="number" min="0" step="0.01" placeholder="Trigger $" style="width:120px" />
+              </div>
+              <button id="placeOrderBtn" class="ghost" style="width:100%;margin-top:8px">Place order · uses qty above</button>
+              <div id="ordHint" class="tinfo" style="margin:8px 0 0"></div>
+            </details>
+            <div id="ordList"></div>
           </div>
         </section>
         <section class="card">
@@ -559,12 +594,13 @@ function confettiBurst(){
 
 // ============================ STATE ============================
 let me=null, profile=null, stocks=[], holdings={}, homeTiers=[], selected=null, historyCache={};
-let nwHistory=[], lastRank=0, lastPlayers=0, ventures=[];
+let nwHistory=[], lastRank=0, lastPlayers=0, ventures=[], shorts={}, orders=[], lastLbRows=[];
 const stock = sym => stocks.find(s=>s.symbol===sym);
 const homeOf = tier => homeTiers.find(h=>h.tier===tier) || {price:0,name:"—",emoji:"🏷️",income_per_tick:0};
 function holdingsValue(){let v=0;for(const s of stocks){const h=holdings[s.symbol];if(h)v+=h.shares*s.price;}return v;}
 function venturesValue(){let v=0;for(const x of ventures)v+=Number(x.value);return v;}
-function netWorth(){return (profile?profile.cash:0)+holdingsValue()+homeOf(profile?profile.home_tier:0).price+venturesValue();}
+function shortsLiability(){let v=0;for(const s of stocks){const sh=shorts[s.symbol];if(sh)v+=sh.shares*s.price;}return v;}
+function netWorth(){return (profile?Number(profile.cash):0)+holdingsValue()+homeOf(profile?profile.home_tier:0).price+venturesValue()-shortsLiability();}
 
 // ============================ TABS ============================
 document.querySelectorAll(".tabbar button").forEach(b=>b.onclick=()=>{
@@ -640,7 +676,16 @@ async function loadLeaderboard(){
 }
 async function loadVentures(){
   const{data}=await sb.from("ventures").select("*").eq("user_id",me.id).order("created_at",{ascending:false});
-  ventures=(data||[]).map(v=>({...v,value:Number(v.value),income_per_tick:Number(v.income_per_tick),invested:Number(v.invested)}));
+  ventures=(data||[]).map(v=>({...v,value:Number(v.value),income_per_tick:Number(v.income_per_tick),invested:Number(v.invested),
+    offer_value:v.offer_value==null?null:Number(v.offer_value)}));
+}
+async function loadShorts(){
+  const{data}=await sb.from("shorts").select("*").eq("user_id",me.id);
+  shorts={}; for(const s of (data||[])) shorts[s.symbol]={shares:Number(s.shares),proceeds:Number(s.proceeds)};
+}
+async function loadOrders(){
+  const{data}=await sb.from("orders").select("*").eq("user_id",me.id).order("created_at",{ascending:false});
+  orders=(data||[]).map(o=>({...o,qty:Number(o.qty),trigger_price:Number(o.trigger_price)}));
 }
 
 // ============================ DAILY 12-HOUR SUMMARY ============================
@@ -700,6 +745,15 @@ function loadUnlocked(){
   try{ unlocked=new Set(JSON.parse(localStorage.getItem("ssim_ach_"+me.id)||"[]")); }catch(e){ unlocked=new Set(); }
 }
 function saveUnlocked(){ try{ localStorage.setItem("ssim_ach_"+me.id, JSON.stringify([...unlocked])); }catch(e){} }
+// Merge cloud-synced achievements, and push up any local-only ones (migration).
+async function loadUnlockedDB(){
+  const{data,error}=await sb.from("user_achievements").select("ach_id").eq("user_id",me.id);
+  if(error) return;                 // table not deployed yet → stay on localStorage
+  const remote=new Set((data||[]).map(r=>r.ach_id));
+  for(const id of remote) unlocked.add(id);
+  for(const id of unlocked) if(!remote.has(id)) sb.rpc("unlock_achievement",{p_id:id});
+  saveUnlocked();
+}
 function achContext(){
   let maxMultiple=0, maxPosVal=0, distinct=0;
   for(const sym in holdings){
@@ -717,6 +771,7 @@ function checkAchievements(){
   for(const a of ACHIEVEMENTS){
     if(!unlocked.has(a.id) && a.test(c)){
       unlocked.add(a.id); any=true;
+      try{ sb.rpc("unlock_achievement",{p_id:a.id}); }catch(e){}
       toast(`🏅 Achievement unlocked: ${a.em} ${a.t}`,"ach");
     }
   }
@@ -787,7 +842,7 @@ function renderMarket(){
     const tr=document.createElement("tr");
     tr.className=(s.symbol===selected?"sel ":"")+(s.goofy?"goofy ":"")+(moved?"flash":"");
     tr.innerHTML=
-      `<td><span class="sym">${s.symbol}</span><br><span class="nm">${s.name}</span></td>
+      `<td><span class="sym">${s.symbol}</span>${Number(s.div_yield)>0?' <span title="Pays dividends">💰</span>':''}<br><span class="nm">${s.name}</span></td>
        <td>${fmt(s.price)}</td>
        <td class="${cls}"><span class="pill ${cls}">${chg>=0?"▲":"▼"} ${pct.toFixed(2)}%</span></td>
        <td>${owned||"—"}</td>
@@ -851,17 +906,43 @@ function renderHoldingsSummary(){
   $("pfValue").textContent=fmtShort(value);
   const e=$("pfPL"); e.textContent=(pl>=0?"+":"−")+fmtShort(Math.abs(pl)); e.className="v "+(pl>0?"up":pl<0?"down":"flat");
 }
+async function selectStock(){
+  $("qty").value=1;
+  await loadHistory(selected);
+  renderChart(); renderTrade();
+}
 function renderTrade(){
   const s=stock(selected); if(!s) return;
   $("buyBtn").textContent=`Buy ${s.symbol}`;
   $("sellBtn").textContent=`Sell ${s.symbol}`;
-  $("qty").value=1;
-  const h=holdings[selected], line=$("holdingLine");
+  const h=holdings[selected], sh=shorts[selected], line=$("holdingLine");
+  let html="";
   if(h && h.shares>0){const avg=h.cost_basis/h.shares,mv=h.shares*s.price,upl=mv-h.cost_basis,pct=(upl/h.cost_basis)*100;
-    line.innerHTML=`You own <b>${h.shares}</b> ${s.symbol} · avg ${fmt(avg)} · value ${fmt(mv)} · `+
+    html+=`You own <b>${h.shares}</b> ${s.symbol} · avg ${fmt(avg)} · value ${fmt(mv)} · `+
       `<span class="${upl>=0?'up':'down'}">${upl>=0?'+':'−'}${fmt(Math.abs(upl)).slice(1)} (${pct.toFixed(1)}%)</span>`;
-  } else line.textContent="You don't own any "+s.symbol+" yet.";
+  }
+  if(sh && sh.shares>0){const avg=sh.proceeds/sh.shares,liab=sh.shares*s.price,upl=sh.proceeds-liab,pct=(upl/sh.proceeds)*100;
+    html+=(html?"<br>":"")+`📉 Short <b>${sh.shares}</b> ${s.symbol} · entry ${fmt(avg)} · cost to cover ${fmt(liab)} · `+
+      `<span class="${upl>=0?'up':'down'}">${upl>=0?'+':'−'}${fmt(Math.abs(upl)).slice(1)} (${pct.toFixed(1)}%)</span>`;
+  }
+  if(!html) html="You don't own any "+s.symbol+" yet.";
+  line.innerHTML=html;
+  $("coverBtn").style.display=(sh&&sh.shares>0)?"":"none";
+  renderOrders();
   updateTradeInfo();
+}
+function renderOrders(){
+  const mine=orders.filter(o=>o.symbol===selected);
+  const list=$("ordList");
+  if(!mine.length){ list.innerHTML=""; return; }
+  const label=o=>o.side==="buy"
+    ? (o.kind==="limit"?"Buy ≤":"Buy ≥")
+    : (o.kind==="limit"?"Sell ≥":"Sell stop ≤");
+  list.innerHTML=mine.map(o=>
+    `<div class="ord-row"><div class="od"><b>${label(o)} ${fmt(o.trigger_price)}</b>
+       <span class="ok">· ${o.qty} ${o.symbol} (${o.kind})</span></div>
+     <button class="red" data-oid="${o.id}">Cancel</button></div>`).join("");
+  list.querySelectorAll("button[data-oid]").forEach(b=>b.onclick=()=>cancelOrder(Number(b.dataset.oid)));
 }
 function updateTradeInfo(){
   const s=stock(selected); if(!s||!profile) return;
@@ -871,6 +952,7 @@ function updateTradeInfo(){
     : `Price ${fmt(s.price)} · max affordable: ${maxAff} share${maxAff===1?'':'s'}`;
 }
 function renderLeaderboard(rows){
+  lastLbRows=rows;
   const medals=["🥇","🥈","🥉"];
   let myIdx=rows.findIndex(r=>r.is_me);
   if(myIdx<0 && profile) myIdx=rows.findIndex(r=>r.display_name===profile.display_name);
@@ -884,6 +966,44 @@ function renderLeaderboard(rows){
       <div class="lb-nw">${fmtShort(r.net_worth)}</div></div>`;
   }).join("")||'<div class="empty">No players yet.</div>';
   checkAchievements();
+}
+function shareLeaderboard(){
+  const rows=(lastLbRows||[]).slice(0,10);
+  if(!rows.length) return toast("Leaderboard isn't loaded yet.","bad");
+  const W=620, top=132, rowH=50, H=top+rows.length*rowH+30, dpr=2;
+  const c=document.createElement("canvas"); c.width=W*dpr; c.height=H*dpr;
+  const ctx=c.getContext("2d"); ctx.scale(dpr,dpr);
+  const grad=ctx.createLinearGradient(0,0,W,H);
+  grad.addColorStop(0,"#0c1018"); grad.addColorStop(1,"#11161f");
+  ctx.fillStyle=grad; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle="#eef2f7"; ctx.font="800 26px Inter,sans-serif";
+  ctx.fillText("📈 Steven's Stock Simulator",26,46);
+  ctx.fillStyle="#8a96a8"; ctx.font="600 14px Inter,sans-serif";
+  ctx.fillText("🏆 LEADERBOARD · "+new Date().toLocaleDateString(),26,72);
+  ctx.strokeStyle="#222b39"; ctx.beginPath(); ctx.moveTo(26,92); ctx.lineTo(W-26,92); ctx.stroke();
+  const medals=["🥇","🥈","🥉"];
+  rows.forEach((r,i)=>{
+    const y=top+i*rowH, mine=r.is_me||(profile&&r.display_name===profile.display_name);
+    if(mine){ ctx.fillStyle="rgba(91,140,255,.14)"; ctx.fillRect(18,y-26,W-36,rowH-8); }
+    ctx.fillStyle="#8a96a8"; ctx.font="800 18px Inter,sans-serif";
+    ctx.fillText(medals[i]||(i+1+""),30,y);
+    ctx.fillStyle=mine?"#7aa2ff":"#eef2f7"; ctx.font="600 17px Inter,sans-serif";
+    const name=(homeOf(r.home_tier).tier>0?homeOf(r.home_tier).emoji+" ":"")+r.display_name+(mine?" (you)":"");
+    ctx.fillText(name,72,y);
+    ctx.fillStyle="#22c55e"; ctx.font="700 17px Inter,sans-serif"; ctx.textAlign="right";
+    ctx.fillText(fmtShort(r.net_worth),W-30,y); ctx.textAlign="left";
+  });
+  c.toBlob(async blob=>{
+    if(!blob) return toast("Couldn't render image.","bad");
+    const file=new File([blob],"leaderboard.png",{type:"image/png"});
+    if(navigator.canShare && navigator.canShare({files:[file]})){
+      try{ await navigator.share({files:[file],title:"Stock Simulator Leaderboard"}); return; }catch(e){}
+    }
+    const url=URL.createObjectURL(blob), a=document.createElement("a");
+    a.href=url; a.download="leaderboard.png"; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    toast("Leaderboard image saved 📸","good");
+  },"image/png");
 }
 function renderHomes(){
   const cur=homeOf(profile.home_tier);
@@ -913,12 +1033,18 @@ function renderVentures(){
   list.innerHTML=ventures.map(v=>{
     const icon=v.kind==="startup"?"🚀":"🏪";
     const gain=v.value-v.invested, gcls=gain>=0?"up":"down";
-    return `<div class="vent-item"><span class="vi">${icon}</span>
-      <div class="vn">${v.name}<br><span class="vk">${v.kind==="startup"?"Startup":"Business"} · invested ${fmtShort(v.invested)} · <span class="${gcls}">${gain>=0?"+":"−"}${fmtShort(Math.abs(gain))}</span></span></div>
+    const hasOffer=v.offer_value!=null && v.offer_expires && new Date(v.offer_expires).getTime()>Date.now();
+    const offerLine=hasOffer?`<br><span class="voffer">🤝 Buyout offer: ${fmtShort(v.offer_value)}</span>`:"";
+    const btn=hasOffer
+      ? `<button class="green" data-offer="${v.id}" title="Accept the acquisition offer">Accept 🤝</button>`
+      : `<button data-vid="${v.id}">Cash out</button>`;
+    return `<div class="vent-item ${hasOffer?'offer':''}"><span class="vi">${icon}</span>
+      <div class="vn">${v.name}<br><span class="vk">${v.kind==="startup"?"Startup":"Business"} · invested ${fmtShort(v.invested)} · <span class="${gcls}">${gain>=0?"+":"−"}${fmtShort(Math.abs(gain))}</span></span>${offerLine}</div>
       <div class="vv"><div class="vval">${fmtShort(v.value)}</div><div class="vinc">+${fmtShort(v.income_per_tick)}/tick</div></div>
-      <button data-vid="${v.id}">Cash out</button></div>`;
+      ${btn}</div>`;
   }).join("");
   list.querySelectorAll("button[data-vid]").forEach(b=>b.onclick=()=>sellVenture(Number(b.dataset.vid)));
+  list.querySelectorAll("button[data-offer]").forEach(b=>b.onclick=()=>acceptVentureOffer(Number(b.dataset.offer)));
 }
 function renderAll(){
   renderHeader(); renderMarket(); renderTicker(); renderChart();
@@ -929,13 +1055,20 @@ function renderAll(){
 }
 
 // ============================ ACTIONS ============================
+// Friendly message for the common "schema not deployed yet" errors.
+function friendlyError(error){
+  if(error && (error.code==="PGRST202" || error.code==="PGRST205" || error.code==="42P01")){
+    return "This feature isn't set up in the database yet. Re-run schema.sql in your Supabase SQL Editor, then reload.";
+  }
+  return (error && error.message) || "Something went wrong.";
+}
 async function buy(){
   const qty=Math.floor(Number($("qty").value));
   if(!qty||qty<=0){ playSound("error"); return toast("Enter a quantity of 1 or more.","bad"); }
   $("buyBtn").disabled=true; $("sellBtn").disabled=true;
   const{error}=await sb.rpc("buy_stock",{p_symbol:selected,p_qty:qty});
   $("buyBtn").disabled=false; $("sellBtn").disabled=false;
-  if(error){ playSound("error"); return toast(error.message,"bad"); }
+  if(error){ playSound("error"); return toast(friendlyError(error),"bad"); }
   playSound("buy"); toast(`Bought ${qty} ${selected}. 📈`,"good");
   await loadStocks(); await loadPortfolio(); await loadHistory(selected); renderAll(); loadLeaderboard();
 }
@@ -946,13 +1079,56 @@ async function sell(){
   $("buyBtn").disabled=true; $("sellBtn").disabled=true;
   const{error}=await sb.rpc("sell_stock",{p_symbol:selected,p_qty:qty});
   $("buyBtn").disabled=false; $("sellBtn").disabled=false;
-  if(error){ playSound("error"); return toast(error.message,"bad"); }
+  if(error){ playSound("error"); return toast(friendlyError(error),"bad"); }
   playSound("sell"); toast(`Sold ${qty} ${selected}. 📉`,"good");
   await loadStocks(); await loadPortfolio(); await loadHistory(selected); renderAll(); loadLeaderboard();
 }
+async function shortStock(){
+  const qty=Math.floor(Number($("qty").value)); const s=stock(selected);
+  if(!qty||qty<=0){ playSound("error"); return toast("Enter a quantity of 1 or more.","bad"); }
+  if(!s) return;
+  if(!confirm(`Short ${qty} ${selected} at ${fmt(s.price)}? You'll owe the shares back later.`)) return;
+  $("shortBtn").disabled=true;
+  const{error}=await sb.rpc("short_stock",{p_symbol:selected,p_qty:qty});
+  $("shortBtn").disabled=false;
+  if(error){ playSound("error"); return toast(friendlyError(error),"bad"); }
+  playSound("sell"); toast(`Shorted ${qty} ${selected}. 📉`,"good");
+  await loadStocks(); await loadPortfolio(); await loadShorts(); await loadHistory(selected); renderAll(); loadLeaderboard();
+}
+async function coverShort(){
+  const qty=Math.floor(Number($("qty").value));
+  if(!qty||qty<=0){ playSound("error"); return toast("Enter a quantity of 1 or more.","bad"); }
+  if(!confirm(`Cover ${qty} ${selected}?`)) return;
+  $("coverBtn").disabled=true;
+  const{error}=await sb.rpc("cover_short",{p_symbol:selected,p_qty:qty});
+  $("coverBtn").disabled=false;
+  if(error){ playSound("error"); return toast(friendlyError(error),"bad"); }
+  playSound("buy"); toast(`Covered ${qty} ${selected}. ✅`,"good");
+  await loadStocks(); await loadPortfolio(); await loadShorts(); await loadHistory(selected); renderAll(); loadLeaderboard();
+}
+async function placeOrder(){
+  const qty=Math.floor(Number($("qty").value));
+  if(!qty||qty<=0){ playSound("error"); return toast("Set a quantity (qty box above) of 1 or more.","bad"); }
+  const trigger=Number($("ordPrice").value);
+  if(!trigger||trigger<=0){ playSound("error"); return toast("Enter a trigger price.","bad"); }
+  const[side,kind]=$("ordType").value.split("|");
+  $("placeOrderBtn").disabled=true;
+  const{error}=await sb.rpc("place_order",{p_symbol:selected,p_side:side,p_kind:kind,p_qty:qty,p_trigger:trigger});
+  $("placeOrderBtn").disabled=false;
+  if(error){ playSound("error"); return toast(friendlyError(error),"bad"); }
+  $("ordPrice").value="";
+  toast(`Order placed for ${qty} ${selected}. ⏱️`,"good");
+  await loadOrders(); renderTrade();
+}
+async function cancelOrder(id){
+  const{error}=await sb.rpc("cancel_order",{p_id:id});
+  if(error){ playSound("error"); return toast(friendlyError(error),"bad"); }
+  toast("Order cancelled.","good");
+  await loadOrders(); renderTrade();
+}
 async function buyHome(tier){
   const{error}=await sb.rpc("buy_home",{p_tier:tier});
-  if(error){ playSound("error"); return toast(error.message,"bad"); }
+  if(error){ playSound("error"); return toast(friendlyError(error),"bad"); }
   playSound("home"); confettiBurst(); toast(`You bought a ${homeOf(tier).name}! ${homeOf(tier).emoji}`,"gold");
   await loadPortfolio(); renderAll(); loadLeaderboard();
 }
@@ -962,7 +1138,7 @@ async function invest(kind){
   if(!amount||amount<1){ playSound("error"); return toast("Enter an amount of at least $1.","bad"); }
   if(amount>profile.cash){ playSound("error"); return toast("Insufficient funds.","bad"); }
   const{data,error}=await sb.rpc("invest_venture",{p_kind:kind,p_amount:amount});
-  if(error){ playSound("error"); return toast(error.message,"bad"); }
+  if(error){ playSound("error"); return toast(friendlyError(error),"bad"); }
   $(inputId).value="";
   await loadPortfolio(); await loadVentures(); renderAll(); loadLeaderboard();
   showVentureResult(data);
@@ -988,8 +1164,16 @@ function showVentureResult(r){
 async function sellVenture(id){
   const v=ventures.find(x=>x.id===id);
   const{error}=await sb.rpc("sell_venture",{p_id:id});
-  if(error){ playSound("error"); return toast(error.message,"bad"); }
+  if(error){ playSound("error"); return toast(friendlyError(error),"bad"); }
   playSound("sell"); toast(`Cashed out ${v?v.name:"venture"} for ${fmtShort(v?v.value:0)}. 💰`,"good");
+  await loadPortfolio(); await loadVentures(); renderAll(); loadLeaderboard();
+}
+async function acceptVentureOffer(id){
+  const v=ventures.find(x=>x.id===id);
+  const{data,error}=await sb.rpc("accept_venture_offer",{p_id:id});
+  if(error){ playSound("error"); return toast(friendlyError(error),"bad"); }
+  playSound("achieve"); confettiBurst();
+  toast(`Acquired! Sold ${v?v.name:"venture"} for ${fmtShort(data)}. 🤝`,"gold");
   await loadPortfolio(); await loadVentures(); renderAll(); loadLeaderboard();
 }
 $("startupBtn").onclick=()=>invest("startup");
@@ -998,6 +1182,9 @@ $("startupAll").onclick=()=>{ $("startupAmt").value=Math.floor(profile.cash); };
 $("bizAll").onclick=()=>{ $("bizAmt").value=Math.floor(profile.cash); };
 $("vrClose").onclick=()=>$("ventResult").classList.remove("show");
 $("buyBtn").onclick=buy; $("sellBtn").onclick=sell;
+$("shortBtn").onclick=shortStock; $("coverBtn").onclick=coverShort;
+$("placeOrderBtn").onclick=placeOrder;
+$("shareLb").onclick=shareLeaderboard;
 $("qty").addEventListener("input",updateTradeInfo);
 document.querySelectorAll(".qbtns button[data-q]").forEach(b=>b.onclick=()=>{$("qty").value=b.dataset.q;updateTradeInfo();});
 $("maxBuy").onclick=()=>{const s=stock(selected);$("qty").value=Math.max(1,Math.floor(profile.cash/s.price));updateTradeInfo();};
@@ -1017,7 +1204,8 @@ async function refreshFromTick(){
     refreshPending=false;
     await loadStocks(); await loadHistory(selected); await loadNWHistory();
     $("liveTxt").textContent="updated "+new Date().toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
-    await loadPortfolio(); await loadVentures(); renderAll(); loadLeaderboard();
+    await loadPortfolio(); await loadVentures(); await loadShorts(); await loadOrders();
+    renderAll(); loadLeaderboard();
   },700);
 }
 function subscribeRealtime(){
@@ -1043,8 +1231,24 @@ async function enterApp(session){
   await loadHomeTiers(); await loadStocks(); await loadPortfolio();
   if(!profile){ await new Promise(r=>setTimeout(r,800)); await loadPortfolio(); }
   await loadHistory(selected); await loadNWHistory(); await loadVentures();
-  renderAll(); loadLeaderboard(); subscribeRealtime();
+  await loadShorts(); await loadOrders(); await loadUnlockedDB();
+  renderAll(); loadLeaderboard(); subscribeRealtime(); startPolling();
+  await claimDailyBonus();
   maybeShowSummary();
+}
+let pollTimer=null;
+function startPolling(){
+  if(pollTimer) return;
+  // Fallback refresh in case the realtime socket drops — keeps prices live.
+  pollTimer=setInterval(()=>{ if(profile && !document.hidden) refreshFromTick(); }, 60000);
+}
+async function claimDailyBonus(){
+  const{data,error}=await sb.rpc("claim_daily_bonus");
+  if(error || !data || !data.claimed) return;
+  await loadPortfolio(); renderHeader();
+  toast(`🎁 Daily bonus +${fmtShort(data.bonus)} · ${data.streak}-day streak!`,"gold");
+  playSound("achieve");
+  if(data.streak>=3) confettiBurst();
 }
 if(configured){
   sb.auth.getSession().then(({data})=>{ if(data.session) enterApp(data.session); });
