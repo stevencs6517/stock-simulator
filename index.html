@@ -387,8 +387,8 @@
             </div>
             <div class="tinfo" id="tradeInfo"></div>
             <div class="trow">
-              <button id="buyBtn" class="green" style="flex:1">Buy —</button>
-              <button id="sellBtn" class="red" style="flex:1">Sell —</button>
+              <button id="buyBtn" class="green" style="flex:1">Buy</button>
+              <button id="sellBtn" class="red" style="flex:1">Sell</button>
             </div>
           </div>
         </section>
@@ -574,6 +574,7 @@ document.querySelectorAll(".tabbar button").forEach(b=>b.onclick=()=>{
   $("tab-estate").classList.toggle("on", t==="estate");
   $("tab-ventures").classList.toggle("on", t==="ventures");
   if(t==="market" && profile){ renderChart(); drawNWChart(); }
+  if(t==="estate" && profile) renderHomes();
   if(t==="ventures" && profile) renderVentures();
 });
 
@@ -632,7 +633,11 @@ async function loadNWHistory(){
   const{data}=await sb.from("networth_snapshots").select("net_worth,ts").eq("user_id",me.id).order("ts",{ascending:false}).limit(120);
   nwHistory=(data||[]).map(r=>Number(r.net_worth)).reverse();
 }
-async function loadLeaderboard(){const{data}=await sb.rpc("get_leaderboard");renderLeaderboard(data||[]);}
+async function loadLeaderboard(){
+  const{data,error}=await sb.rpc("get_leaderboard");
+  if(error){ $("leaderboard").innerHTML='<div class="empty">Leaderboard unavailable.</div>'; return; }
+  renderLeaderboard(data||[]);
+}
 async function loadVentures(){
   const{data}=await sb.from("ventures").select("*").eq("user_id",me.id).order("created_at",{ascending:false});
   ventures=(data||[]).map(v=>({...v,value:Number(v.value),income_per_tick:Number(v.income_per_tick),invested:Number(v.invested)}));
@@ -787,7 +792,7 @@ function renderMarket(){
        <td class="${cls}"><span class="pill ${cls}">${chg>=0?"▲":"▼"} ${pct.toFixed(2)}%</span></td>
        <td>${owned||"—"}</td>
        <td>${owned?fmtShort(owned*s.price):"—"}</td>`;
-    tr.onclick=async()=>{selected=s.symbol;renderMarket();await loadHistory(selected);renderChart();renderTrade();};
+    tr.onclick=()=>{selected=s.symbol;renderMarket();selectStock();};
     body.appendChild(tr);
   }
   for(const s of stocks) prevPrices[s.symbol]=s.price;
@@ -850,15 +855,16 @@ function renderTrade(){
   const s=stock(selected); if(!s) return;
   $("buyBtn").textContent=`Buy ${s.symbol}`;
   $("sellBtn").textContent=`Sell ${s.symbol}`;
+  $("qty").value=1;
   const h=holdings[selected], line=$("holdingLine");
-  if(h){const avg=h.cost_basis/h.shares,mv=h.shares*s.price,upl=mv-h.cost_basis,pct=(upl/h.cost_basis)*100;
+  if(h && h.shares>0){const avg=h.cost_basis/h.shares,mv=h.shares*s.price,upl=mv-h.cost_basis,pct=(upl/h.cost_basis)*100;
     line.innerHTML=`You own <b>${h.shares}</b> ${s.symbol} · avg ${fmt(avg)} · value ${fmt(mv)} · `+
       `<span class="${upl>=0?'up':'down'}">${upl>=0?'+':'−'}${fmt(Math.abs(upl)).slice(1)} (${pct.toFixed(1)}%)</span>`;
   } else line.textContent="You don't own any "+s.symbol+" yet.";
   updateTradeInfo();
 }
 function updateTradeInfo(){
-  const s=stock(selected); if(!s) return;
+  const s=stock(selected); if(!s||!profile) return;
   const qty=Math.max(0,Math.floor(Number($("qty").value)||0)), maxAff=Math.floor(profile.cash/s.price);
   $("tradeInfo").textContent=qty>0
     ? `${qty} × ${fmt(s.price)} = ${fmt(s.price*qty)}   ·   max affordable: ${maxAff}`
@@ -874,7 +880,7 @@ function renderLeaderboard(rows){
     const you=i===myIdx;
     return `<div class="lb-row ${you?'you':''}">
       <div class="lb-rank">${medals[i]||(i+1)}</div>
-      <div class="lb-name">${homeOf(r.home_tier).emoji} ${you?`<span class="yt">${r.display_name} (you)</span>`:r.display_name}</div>
+      <div class="lb-name">${homeOf(r.home_tier).tier>0?homeOf(r.home_tier).emoji+' ':''} ${you?`<span class="yt">${r.display_name} (you)</span>`:r.display_name}</div>
       <div class="lb-nw">${fmtShort(r.net_worth)}</div></div>`;
   }).join("")||'<div class="empty">No players yet.</div>';
   checkAchievements();
@@ -916,7 +922,9 @@ function renderVentures(){
 }
 function renderAll(){
   renderHeader(); renderMarket(); renderTicker(); renderChart();
-  drawNWChart(); renderHoldingsSummary(); renderTrade(); renderHomes(); renderVentures();
+  drawNWChart(); renderHoldingsSummary(); renderTrade();
+  if($("tab-estate").classList.contains("on")) renderHomes();
+  if($("tab-ventures").classList.contains("on")) renderVentures();
   checkAchievements();
 }
 
@@ -924,7 +932,9 @@ function renderAll(){
 async function buy(){
   const qty=Math.floor(Number($("qty").value));
   if(!qty||qty<=0){ playSound("error"); return toast("Enter a quantity of 1 or more.","bad"); }
+  $("buyBtn").disabled=true; $("sellBtn").disabled=true;
   const{error}=await sb.rpc("buy_stock",{p_symbol:selected,p_qty:qty});
+  $("buyBtn").disabled=false; $("sellBtn").disabled=false;
   if(error){ playSound("error"); return toast(error.message,"bad"); }
   playSound("buy"); toast(`Bought ${qty} ${selected}. 📈`,"good");
   await loadStocks(); await loadPortfolio(); await loadHistory(selected); renderAll(); loadLeaderboard();
@@ -932,7 +942,10 @@ async function buy(){
 async function sell(){
   const qty=Math.floor(Number($("qty").value));
   if(!qty||qty<=0){ playSound("error"); return toast("Enter a quantity of 1 or more.","bad"); }
+  if(!confirm(`Sell ${qty} ${selected}?`)) return;
+  $("buyBtn").disabled=true; $("sellBtn").disabled=true;
   const{error}=await sb.rpc("sell_stock",{p_symbol:selected,p_qty:qty});
+  $("buyBtn").disabled=false; $("sellBtn").disabled=false;
   if(error){ playSound("error"); return toast(error.message,"bad"); }
   playSound("sell"); toast(`Sold ${qty} ${selected}. 📉`,"good");
   await loadStocks(); await loadPortfolio(); await loadHistory(selected); renderAll(); loadLeaderboard();
